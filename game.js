@@ -369,7 +369,7 @@ function totalVP(pi, includeHidden) {
 function checkWin() {
   if (state.phase !== 'play') return;
   const pi = state.current;
-  if (totalVP(pi, true) >= 10) endGame(pi);
+  if (totalVP(pi, true) >= state.vpTarget) endGame(pi);
 }
 
 function endGame(winner) {
@@ -386,7 +386,7 @@ function endGame(winner) {
   }).sort((a, b) => b.vp - a.vp);
   const m = showModal(`
     <h2>🏆 ניצחון!</h2>
-    <p class="m-sub">${esc(state.players[winner].name)} הגיע ל-10 נקודות וניצח במשחק</p>
+    <p class="m-sub">${esc(state.players[winner].name)} הגיע ל-${state.vpTarget} נקודות וניצח במשחק</p>
     <table class="win-table">
       <tr><th>שחקן</th><th>נקודות</th><th>מתוכן קלפים סמויים</th></tr>
       ${rows.map(r => `<tr><td><span style="color:${r.hex}">●</span> ${esc(r.name)}</td><td>${r.vp}</td><td>${r.hidden}</td></tr>`).join('')}
@@ -1209,10 +1209,18 @@ function vertexScore(pi, vid) {
 
 function aiSetupPlace() {
   const pi = state.current;
-  // יישוב
+  // יישוב — מעדיף מגוון משאבים + נקודות גבוהות
   const spots = legalSettlementSpots(pi, false);
   spots.sort((a, b) => vertexScore(pi, b) - vertexScore(pi, a));
-  setupPlaceSettlement(spots[0]);
+  // בחירת הצומת הטובה, עם עדיפות למגוון משאבים
+  let best = spots[0], bestScore = -1;
+  for (const vid of spots) {
+    const hexes = board.vertices[vid].hexes;
+    const resTypes = new Set(hexes.map(h => TERRAINS[board.hexes[h].terrain].res).filter(Boolean));
+    const score = vertexScore(pi, vid) + resTypes.size * 1.5; // בונוס למגוון
+    if (score > bestScore) { bestScore = score; best = vid; }
+  }
+  setupPlaceSettlement(best);
   // דרך — לכיוון הצומת הפנוי הטוב ביותר במרחק 2
   setTimeout(() => {
     const vid = state.setup.vertex;
@@ -1241,13 +1249,18 @@ function robberBlocksMe(pi) {
 function aiTurn() {
   if (state.phase !== 'play') return;
   const p = cur();
-  // אביר לפני הטלה אם השודד חוסם אותי
-  if (!state.devPlayed && p.dev.knight > 0 && robberBlocksMe(state.current)) {
+  // אביר לפני הטלה: אם השודד חוסם, או אם יש 2+ אבירים ורוצה צבא גדול
+  const wantKnight = !state.devPlayed && p.dev.knight > 0 && (
+    robberBlocksMe(state.current) || aiKnightWorthwhile(p)
+  );
+  if (wantKnight) {
     p.dev.knight--;
     p.knightsPlayed++;
     state.devPlayed = true;
     log(p.name + ' הפעיל אביר ⚔️');
     updateAwards();
+    checkWin();
+    if (state.phase !== 'play') return;
     aiRobber();
     if (state.phase !== 'play') return;
   }
@@ -1264,7 +1277,7 @@ function aiContinue() {
   renderAll();
   if (state.phase !== 'play') return;
   // כשאין מהלך זמין — ניסיון יזום למסחר עם שחקנים (פעם אחת בתור)
-  if (!acted && !state.aiTraded && Math.random() < 0.65) {
+  if (!acted && !state.aiTraded && Math.random() < 0.85) {
     const offer = aiBuildOffer(p);
     if (offer) {
       state.aiTraded = true;
@@ -1286,12 +1299,19 @@ function aiContinue() {
 
 function aiTryAction(p) {
   const pi = state.current;
-  // עיר
+  // עיר — תמיד עדיפות ראשונה (יותר VP, משתלם)
   if (p.citiesLeft > 0 && canAfford(p, COST.city)) {
     const setts = ownSettlements(pi);
     if (setts.length) {
       setts.sort((a, b) => vertexPips(b) - vertexPips(a));
       placeCity(pi, setts[0]);
+      return true;
+    }
+  }
+  // קלף פיתוח — אם יש 4+ קלפים ביד ואפשר לקנות, קנה כמעט תמיד (צבירת אבירים)
+  if (state.devDeck.length && canAfford(p, COST.dev) && p.dev.knight + p.newDev.knight < 3) {
+    if (handSize(p) >= 4 || Math.random() < 0.45) {
+      buyDev(pi);
       return true;
     }
   }
@@ -1304,33 +1324,29 @@ function aiTryAction(p) {
       return true;
     }
   }
-  // דרך — רק אם היא מקדמת יישוב עתידי (אין נקודה חוקית ועדיין יש יישובים להציב)
+  // דרך — אגרסיבי יותר: גם כשאין מקום, וגם כשיש עודף עץ+טיט
   if (p.roadsLeft > 0 && canAfford(p, COST.road)) {
     const noSpot = legalSettlementSpots(pi, true).length === 0;
-    const wantsExpand = noSpot && p.settlementsLeft > 0;
-    // לא לבזבז דרכים אם כבר מחזיק בדרך הארוכה בפער
-    const roadSpam = state.longestRoad === pi && Math.random() < 0.8;
-    if (wantsExpand && !roadSpam && p.roadsLeft > 1) {
+    const hasSurplus = p.res.wood >= 2 && p.res.brick >= 2;
+    const wantsExpand = (noSpot || hasSurplus) && p.settlementsLeft > 0;
+    // מרוץ על הדרך הארוכה
+    const myLen = state.roadLens[pi];
+    const holder = state.longestRoad;
+    const wantsRace = holder !== null && holder !== pi && myLen >= state.roadLens[holder] - 1 && myLen >= 4;
+    // גם אם כבר מחזיק בדרך הארוכה — בנה כדי לשמור על הפער
+    const defendRoad = holder === pi && Math.random() < 0.5;
+    if ((wantsExpand || wantsRace || defendRoad) && p.roadsLeft > 1) {
       const e = aiBestRoad(pi);
       if (e) { placeRoad(pi, e, false); return true; }
     }
-    // מרוץ על הדרך הארוכה: אם קרוב לקחת אותה (הפרש 1) — שווה לבנות
-    if (!noSpot && state.roadLens) {
-      const myLen = state.roadLens[pi];
-      const holder = state.longestRoad;
-      if (holder !== null && holder !== pi && myLen >= state.roadLens[holder] - 1 && myLen >= 4) {
-        const e = aiBestRoad(pi);
-        if (e) { placeRoad(pi, e, false); return true; }
-      }
-    }
   }
-  // מסחר עם הבנק כדי להשלים את היעד — לפני בזבוז על קלפי פיתוח
+  // מסחר עם הבנק כדי להשלים את היעד
   if (aiTryBankTrade(p)) return true;
-  // קלף פיתוח: כשאי אפשר להתקדם ליעד, או כשיש עודף משאבים
+  // קלף פיתוח — גם כשאי אפשר לבנות, וכשיש עודף
   if (state.devDeck.length && canAfford(p, COST.dev)) {
     const goal = aiGoal(p);
     const goalMiss = RES_TYPES.reduce((s, r) => s + Math.max(0, (goal[r] || 0) - p.res[r]), 0);
-    if (goalMiss >= 2 || handSize(p) >= 8 || Math.random() < 0.25) {
+    if (goalMiss >= 2 || handSize(p) >= 7 || Math.random() < 0.35) {
       buyDev(pi);
       return true;
     }
@@ -1344,15 +1360,21 @@ function aiBestRoad(pi) {
   let best = null, bestScore = -1;
   for (const eid of edges) {
     const e = board.edges[eid];
-    let s = Math.random();
+    let s = Math.random() * 0.5;
     for (const vid of [e.v1, e.v2]) {
       // צומת בנייה מיידי בקצה הדרך
-      if (canPlaceSettlement(pi, vid, false)) s += vertexPips(vid) + 4;
+      if (canPlaceSettlement(pi, vid, false)) s += vertexPips(vid) + 5;
       // מבט שני קדימה: צומת בנייה במרחק דרך אחת נוספת
       for (const eid2 of board.vertices[vid].adjEdges) {
         if (eid2 === eid || board.edges[eid2].road !== null) continue;
         const u = otherVert(eid2, vid);
-        if (canPlaceSettlement(pi, u, false)) s += vertexPips(u) * 0.5;
+        if (canPlaceSettlement(pi, u, false)) s += vertexPips(u) * 0.6;
+        // מבט שלישי קדימה
+        for (const eid3 of board.vertices[u].adjEdges) {
+          if (eid3 === eid2 || board.edges[eid3].road !== null) continue;
+          const w = otherVert(eid3, u);
+          if (canPlaceSettlement(pi, w, false)) s += vertexPips(w) * 0.3;
+        }
       }
     }
     if (s > bestScore) { bestScore = s; best = eid; }
@@ -1374,7 +1396,7 @@ function aiTryBankTrade(p) {
       const m = (cost[r] || 0) - p.res[r];
       for (let k = 0; k < m; k++) missing.push(r);
     }
-    if (missing.length === 0 || missing.length > 3) continue;
+    if (missing.length === 0 || missing.length > 4) continue;
     const mr = missing[0];
     // מעדיפים לסחור מהמשאב עם היחס הזול ביותר והעודף הגדול ביותר
     let bestR = null, bestKey = -1;
@@ -1404,7 +1426,7 @@ function aiMaybeDev(p) {
       if (e) placeRoad(pi, e, true);
       if (state.phase !== 'play') return;
     }
-  } else if (p.dev.yop > 0 && canPlayDev(p, 'yop')) {
+  } else if (p.dev.yop > 0 && canPlayDev(p, 'yop') && state.hasRolled) {
     p.dev.yop--;
     state.devPlayed = true;
     // בוחרים את מה שחסר ליעד הנוכחי
@@ -1468,18 +1490,19 @@ function aiKnightWorthwhile(p) {
   } else if (holder !== pi && after > state.players[holder].knightsPlayed) {
     return true;                                       // חוטף את התואר
   }
-  return Math.random() < 0.15;
+  return Math.random() < 0.35; // יותר אגרסיבי עם אבירים
 }
 
 function aiRobber() {
   const pi = state.current;
-  // מזהים את המוביל כדי להציק לו
+  // מזהים את המוביל — תמיד מציקים לו
   let leader = null, leaderVP = -1;
   state.players.forEach((q, i) => {
     if (i === pi) return;
     const vp = totalVP(i, false);
     if (vp > leaderVP) { leaderVP = vp; leader = i; }
   });
+  // רק hexes עם אויב, בלי אצלי
   let candidates = board.hexes.filter(h => {
     if (h.id === state.robberHex) return false;
     let enemy = false, mine = false;
@@ -1497,7 +1520,7 @@ function aiRobber() {
       const b = board.vertices[vid].building;
       if (b && b.player !== pi) {
         let w = pipCount(h.num) * (b.type === 'city' ? 2 : 1);
-        if (b.player === leader) w *= 1.7; // עדיפות לחסימת המוביל
+        if (b.player === leader) w *= 2.5; // עדיפות חזקה לחסימת המוביל
         s += w;
       }
     }
@@ -1537,15 +1560,18 @@ function aiDiscard(p) {
 function aiGoal(p) {
   const pi = p.idx;
   const options = [];
-  if (p.settlementsLeft > 0 && legalSettlementSpots(pi, true).length) options.push(COST.settlement);
-  if (p.citiesLeft > 0 && ownSettlements(pi).length) options.push(COST.city);
-  if (!options.length && p.settlementsLeft > 0 && p.roadsLeft > 0 && legalRoadEdges(pi).length) options.push(COST.road);
-  if (!options.length) options.push(COST.dev);
-  let best = options[0], bestMiss = 99;
-  for (const c of options) {
+  // עדיפות לעיר: תמיד מכניס ראשון ועם בונוס
+  if (p.citiesLeft > 0 && ownSettlements(pi).length) options.push({ cost: COST.city, prio: 3 });
+  if (p.settlementsLeft > 0 && legalSettlementSpots(pi, true).length) options.push({ cost: COST.settlement, prio: 2 });
+  if (!options.length && p.settlementsLeft > 0 && p.roadsLeft > 0 && legalRoadEdges(pi).length) options.push({ cost: COST.road, prio: 1 });
+  if (!options.length) options.push({ cost: COST.dev, prio: 0 });
+  let best = options[0], bestScore = -99;
+  for (const opt of options) {
     let miss = 0;
-    for (const r of RES_TYPES) miss += Math.max(0, (c[r] || 0) - p.res[r]);
-    if (miss < bestMiss) { bestMiss = miss; best = c; }
+    for (const r of RES_TYPES) miss += Math.max(0, (opt.cost[r] || 0) - p.res[r]);
+    // ציון = עדיפות - מרחק (קרוב + חשוב = טוב)
+    const score = opt.prio * 2 - miss;
+    if (score > bestScore) { bestScore = score; best = opt.cost; }
   }
   return best;
 }
@@ -1569,7 +1595,7 @@ function aiEvaluateTrade(q, give, get) {
     vIn += (give[r] || 0) * aiValue(q, r);
     vOut += (get[r] || 0) * aiValue(q, r);
   }
-  return vIn > vOut + 0.1;
+  return vIn > vOut + 0.05;
 }
 
 // הצעה נגדית של המחשב, אם ההצעה המקורית לא כדאית
@@ -1634,6 +1660,11 @@ function aiBuildOffer(p) {
   RES_TYPES.forEach(r => { give[r] = 0; get[r] = 0; });
   give[giveR] = bestSpare >= 3 ? 2 : 1; // נדיב יותר כשיש עודף גדול
   get[want] = 1;
+  // הצעה נדיבה יותר: גם 2:2 כשיש עודף גדול וצריך 2
+  if (bestSpare >= 4 && (goal[want] || 0) - p.res[want] >= 2) {
+    give[giveR] = 2;
+    get[want] = 2;
+  }
   return { give, get };
 }
 
@@ -2021,6 +2052,7 @@ function renderActions() {
 
 function renderTop() {
   const p = cur();
+  $('title').textContent = 'קָטָאן (' + state.vpTarget + ' נקודות)';
   $('turn-indicator').innerHTML =
     `<span style="color:${p.color.hex};font-size:22px">●</span> התור של ${esc(p.name)}${p.isAI ? ' 🤖' : ''}`;
   renderDie($('die1'), state.dice ? state.dice[0] : 0);
@@ -2063,6 +2095,7 @@ function renderAll() {
 // מסך פתיחה והתחלת משחק
 // =========================================================
 let chosenCount = 3;
+let chosenVP = 10;
 
 function buildSetupRows() {
   const el = $('player-rows');
@@ -2109,6 +2142,7 @@ function startGame() {
 
   state = {
     phase: 'setup',
+    vpTarget: chosenVP,
     players,
     current: 0,
     dice: null,
@@ -2360,6 +2394,12 @@ document.addEventListener('DOMContentLoaded', () => {
       chosenCount = +b.dataset.n;
       document.querySelectorAll('#pcount button').forEach(x => x.classList.toggle('active', x === b));
       buildSetupRows();
+    };
+  });
+  document.querySelectorAll('#vp-select button').forEach(b => {
+    b.onclick = () => {
+      chosenVP = +b.dataset.vp;
+      document.querySelectorAll('#vp-select button').forEach(x => x.classList.toggle('active', x === b));
     };
   });
   $('start-btn').onclick = startGame;
