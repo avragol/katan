@@ -303,12 +303,61 @@ select.m-select {
   .pop-in, .die.rolling, .die.landed { animation: none; }
 }
 
-/* ===== בחירת נקודות ניצחון ===== */
-#vp-select button {
-  width: 44px; height: 40px; font-size: 18px; font-weight: 700;
-  border: 2px solid #8a5a2b; background: #fdf4dd; border-radius: 8px; margin: 0 3px;
+/* ===== סליידר נקודות ניצחון ===== */
+.vp-row { flex-direction: column; align-items: stretch; gap: 8px; }
+#vp-slider-wrap { display: flex; flex-direction: column; gap: 10px; }
+
+#vp-display {
+  text-align: center; font-size: 28px; font-weight: 800;
+  color: #7a1f1f; line-height: 1.2;
+  transition: transform .15s ease;
 }
-#vp-select button.active { background: #7a1f1f; color: #ffe9b8; border-color: #5c1414; }
+#vp-display small { font-size: 13px; font-weight: 500; color: #8a5a2b; }
+#vp-display.bump { transform: scale(1.18); }
+
+#vp-slider-track {
+  position: relative; height: 44px; padding: 0 4px;
+  user-select: none; -webkit-user-select: none; touch-action: none;
+}
+#vp-slider-fill {
+  position: absolute; top: 16px; height: 10px; border-radius: 5px;
+  background: linear-gradient(90deg, #d4882e, #b5651d);
+  transition: width .12s ease; pointer-events: none;
+  left: 4px;
+}
+#vp-slider-thumb {
+  position: absolute; top: 10px; width: 26px; height: 26px;
+  border-radius: 50%; background: #7a1f1f; border: 3px solid #ffe9b8;
+  box-shadow: 0 2px 6px rgba(0,0,0,.3);
+  cursor: grab; transform: translateX(-50%);
+  transition: left .12s ease; touch-action: none;
+  z-index: 2;
+}
+#vp-slider-thumb:active { cursor: grabbing; transform: translateX(-50%) scale(1.15); }
+#vp-slider-thumb::before {
+  content: ''; position: absolute; top: 50%; left: 50%;
+  width: 8px; height: 8px; border-radius: 50%; background: #ffe9b8;
+  transform: translate(-50%, -50%);
+}
+
+#vp-slider-ticks {
+  position: relative; display: flex; justify-content: space-between;
+  padding-top: 26px;
+}
+#vp-slider-ticks span {
+  width: 28px; text-align: center; font-size: 13px; font-weight: 700;
+  color: #8a5a2b; cursor: pointer; transition: color .15s, font-size .15s;
+  position: relative;
+}
+#vp-slider-ticks span::before {
+  content: ''; position: absolute; top: -22px; left: 50%;
+  width: 3px; height: 8px; border-radius: 2px; background: #8a5a2b;
+  transform: translateX(-50%); opacity: .5;
+}
+#vp-slider-ticks span.active {
+  color: #7a1f1f; font-size: 16px;
+}
+#vp-slider-ticks span.active::before { opacity: 1; background: #7a1f1f; height: 10px; top: -24px; }
 
 /* ===== כפתורי topbar ===== */
 .topbar-btn {
