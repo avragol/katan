@@ -2378,6 +2378,74 @@ function quitGame() {
   $('q-no').onclick = () => closeModal();
 }
 
+
+// =========================================================
+// סליידר נקודות ניצחון — אינטראקטיבי
+// =========================================================
+function initVPSlider() {
+  const track = $('vp-slider-track');
+  const thumb = $('vp-slider-thumb');
+  const fill = $('vp-slider-fill');
+  const display = $('vp-display');
+  const vpVal = $('vp-value');
+  const ticks = document.querySelectorAll('#vp-slider-ticks span');
+  const MIN_VP = 8, MAX_VP = 12;
+
+  function updateVP(val, animate) {
+    val = Math.max(MIN_VP, Math.min(MAX_VP, val));
+    chosenVP = val;
+    const pct = (val - MIN_VP) / (MAX_VP - MIN_VP); // 0..1
+    const trackW = track.clientWidth - 8; // padding
+    const px = 4 + pct * trackW;
+    thumb.style.left = px + 'px';
+    fill.style.width = (px - 4) + 'px';
+    vpVal.textContent = val;
+    ticks.forEach(t => t.classList.toggle('active', +t.dataset.vp === val));
+    if (animate) {
+      display.classList.add('bump');
+      setTimeout(() => display.classList.remove('bump'), 150);
+    }
+  }
+
+  function valFromX(clientX) {
+    const rect = track.getBoundingClientRect();
+    const pct = (clientX - rect.left - 4) / (rect.width - 8);
+    return Math.round(MIN_VP + pct * (MAX_VP - MIN_VP));
+  }
+
+  let dragging = false;
+
+  // גרירת הטעינה
+  thumb.addEventListener('pointerdown', e => {
+    e.preventDefault();
+    dragging = true;
+    thumb.setPointerCapture(e.pointerId);
+  });
+  thumb.addEventListener('pointermove', e => {
+    if (!dragging) return;
+    updateVP(valFromX(e.clientX), true);
+  });
+  thumb.addEventListener('pointerup', () => { dragging = false; });
+  thumb.addEventListener('pointercancel', () => { dragging = false; });
+
+  // קליק על ה-track
+  track.addEventListener('pointerdown', e => {
+    if (e.target === thumb) return;
+    updateVP(valFromX(e.clientX), true);
+  });
+
+  // קליק על מספרים
+  ticks.forEach(t => {
+    t.addEventListener('click', () => updateVP(+t.dataset.vp, true));
+  });
+
+  // עדכן ב-init
+  requestAnimationFrame(() => updateVP(chosenVP, false));
+
+  // עדכן ב-resize
+  window.addEventListener('resize', () => updateVP(chosenVP, false));
+}
+
 // ===== חיווט ראשוני =====
 document.addEventListener('DOMContentLoaded', () => {
   initPWA();
@@ -2396,12 +2464,8 @@ document.addEventListener('DOMContentLoaded', () => {
       buildSetupRows();
     };
   });
-  document.querySelectorAll('#vp-select button').forEach(b => {
-    b.onclick = () => {
-      chosenVP = +b.dataset.vp;
-      document.querySelectorAll('#vp-select button').forEach(x => x.classList.toggle('active', x === b));
-    };
-  });
+  // === סליידר נקודות ניצחון ===
+  initVPSlider();
   $('start-btn').onclick = startGame;
   $('roll-btn').onclick = rollDice;
 

@@ -30,14 +30,21 @@
 
     <div id="player-rows"></div>
 
-    <div class="setup-row">
+    <div class="setup-row vp-row">
       <span class="setup-label">נקודות לניצחון:</span>
-      <div id="vp-select">
-        <button data-vp="8">8</button>
-        <button data-vp="9">9</button>
-        <button data-vp="10" class="active">10</button>
-        <button data-vp="11">11</button>
-        <button data-vp="12">12</button>
+      <div id="vp-slider-wrap">
+        <div id="vp-display"><span id="vp-value">10</span> <small>נקודות</small></div>
+        <div id="vp-slider-track">
+          <div id="vp-slider-fill"></div>
+          <div id="vp-slider-thumb"></div>
+          <div id="vp-slider-ticks">
+            <span data-vp="8">8</span>
+            <span data-vp="9">9</span>
+            <span data-vp="10">10</span>
+            <span data-vp="11">11</span>
+            <span data-vp="12">12</span>
+          </div>
+        </div>
       </div>
     </div>
 
