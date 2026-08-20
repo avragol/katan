@@ -303,6 +303,13 @@ select.m-select {
   .pop-in, .die.rolling, .die.landed { animation: none; }
 }
 
+/* ===== בחירת נקודות ניצחון ===== */
+#vp-select button {
+  width: 44px; height: 40px; font-size: 18px; font-weight: 700;
+  border: 2px solid #8a5a2b; background: #fdf4dd; border-radius: 8px; margin: 0 3px;
+}
+#vp-select button.active { background: #7a1f1f; color: #ffe9b8; border-color: #5c1414; }
+
 /* ===== כפתורי topbar ===== */
 .topbar-btn {
   background: none; border: 1.5px solid #8a5a2b; border-radius: 8px;
