@@ -343,6 +343,7 @@ select.m-select {
 #vp-slider-ticks {
   position: relative; display: flex; justify-content: space-between;
   padding-top: 26px;
+  direction: ltr;
 }
 #vp-slider-ticks span {
   width: 28px; text-align: center; font-size: 13px; font-weight: 700;
