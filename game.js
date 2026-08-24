@@ -254,6 +254,7 @@ function placeRoad(pi, eid, free) { SOUNDS.build();
   board.edges[eid].road = pi;
   state.fx.edges.add(eid);
   p.roadsLeft--;
+  statAdd(pi, 'roads');
   log(p.name + ' בנה דרך 🛤️');
   updateAwards();
   checkWin();
@@ -265,6 +266,7 @@ function placeSettlement(pi, vid, free) { SOUNDS.build();
   board.vertices[vid].building = { player: pi, type: 'settlement' };
   state.fx.verts.add(vid);
   p.settlementsLeft--;
+  statAdd(pi, 'settlements');
   log(p.name + ' בנה יישוב 🏠');
   updateAwards(); // יישוב חדש יכול לשבור דרך של יריב
   checkWin();
@@ -277,6 +279,7 @@ function placeCity(pi, vid) { SOUNDS.city();
   state.fx.verts.add(vid);
   p.settlementsLeft++;
   p.citiesLeft--;
+  statAdd(pi, 'cities');
   log(p.name + ' שדרג יישוב לעיר 🏛️');
   checkWin();
 }
@@ -286,6 +289,7 @@ function buyDev(pi) { SOUNDS.dev();
   payCost(p, COST.dev);
   const card = state.devDeck.pop();
   p.newDev[card]++; saveGame();
+  statAdd(pi, 'devCards');
   log(p.name + ' קנה קלף פיתוח 🃏');
   fly('🃏', '#6b4a8a', () => fromBank(), toPcard(pi), 1, 350);
   checkWin(); // ייתכן קלף נקודת ניצחון מנצח
@@ -374,6 +378,8 @@ function checkWin() {
 
 function endGame(winner) {
   state.phase = 'ended';
+  stopTimer();
+  state.finalTime = getElapsed();
   clearSave();
   SOUNDS.win();
   state.mode = null;
@@ -384,13 +390,61 @@ function endGame(winner) {
     const hidden = p.dev.vp + p.newDev.vp;
     return { name: p.name, hex: p.color.hex, vp, hidden };
   }).sort((a, b) => b.vp - a.vp);
+
+  // === התפלגות קוביות ===
+  const maxRoll = Math.max(1, ...state.diceRolls.slice(2, 13));
+  const diceBars = [];
+  for (let n = 2; n <= 12; n++) {
+    const count = state.diceRolls[n] || 0;
+    const h = Math.round((count / maxRoll) * 70);
+    const isSeven = n === 7;
+    diceBars.push(`<div class="dice-bar-wrap">
+      <span class="dice-bar-count">${count}</span>
+      <div class="dice-bar${isSeven ? ' robber' : ''}" style="height:${h}px"></div>
+      <span class="dice-bar-label">${n}</span>
+    </div>`);
+  }
+
+  // === טבלת פעולות ===
+  const statIcons = [
+    { key: 'roads', label: '🛤️' },
+    { key: 'settlements', label: '🏠' },
+    { key: 'cities', label: '🏛️' },
+    { key: 'devCards', label: '🃏' },
+    { key: 'bankTrades', label: '🏦' },
+    { key: 'playerTrades', label: '🤝' },
+    { key: 'knights', label: '⚔️' },
+    { key: 'robberMoves', label: '🥷' },
+    { key: 'diceRolls', label: '🎲' }
+  ];
+  const statRows = state.players.map((p, i) => {
+    const s = state.stats[i] || {};
+    const cells = statIcons.map(si => `<td>${s[si.key] || 0}</td>`).join('');
+    return `<tr><td><span style="color:${p.color.hex}">●</span> ${esc(p.name)}</td>${cells}</tr>`;
+  }).join('');
+  const statHeaders = statIcons.map(si => `<th title="${si.key}">${si.label}</th>`).join('');
+
   const m = showModal(`
     <h2>🏆 ניצחון!</h2>
     <p class="m-sub">${esc(state.players[winner].name)} הגיע ל-${state.vpTarget} נקודות וניצח במשחק</p>
+    <div class="game-duration">⏱️ זמן משחק: ${formatTime(state.finalTime)}</div>
     <table class="win-table">
       <tr><th>שחקן</th><th>נקודות</th><th>מתוכן קלפים סמויים</th></tr>
       ${rows.map(r => `<tr><td><span style="color:${r.hex}">●</span> ${esc(r.name)}</td><td>${r.vp}</td><td>${r.hidden}</td></tr>`).join('')}
     </table>
+    <div class="stats-section">
+      <h3>🎲 התפלגות הטלות קוביות</h3>
+      <div class="dice-chart">${diceBars.join('')}</div>
+    </div>
+    <div class="stats-section">
+      <h3>📊 סטטיסטיקות שחקנים</h3>
+      <div style="overflow-x:auto">
+      <table class="stats-table">
+        <tr><th>שחקן</th>${statHeaders}</tr>
+        ${statRows}
+      </table>
+      </div>
+    </div>
     <div class="m-actions"><button class="m-btn" id="m-new">משחק חדש</button></div>
   `);
   m.querySelector('#m-new').onclick = () => location.reload();
@@ -534,6 +588,7 @@ function rollDice() { SOUNDS.dice();
   const d1 = 1 + rand(6), d2 = 1 + rand(6);
   state.dice = [d1, d2];
   state.hasRolled = true;
+  statDiceAdd(d1 + d2);
   renderTop(); // מסתיר את כפתור ההטלה בזמן האנימציה
   animateDice(d1, d2, () => {
     const sum = d1 + d2;
@@ -600,6 +655,7 @@ function produce(roll) { SOUNDS.click();
 // השודד
 // =========================================================
 function startRobberFlow(done) {
+  statAdd(state.current, 'robberMoves');
   const q = state.players.filter(p => handSize(p) > 7);
   const next = () => {
     const p = q.shift();
@@ -830,6 +886,7 @@ function bankTradeExec(pi, giveRes, getRes) { SOUNDS.trade();
   gainRes(p, getRes, 1);
   flyRes(giveRes, fromPcard(pi), toBank, ratio, 0);
   flyRes(getRes, fromBank, toPcard(pi), 1, 420);
+  statAdd(pi, 'bankTrades');
   log(p.name + ' סחר עם הבנק: ' + ratio + ' ' + RES[giveRes].name + ' ← 1 ' + RES[getRes].name);
   return true;
 }
@@ -935,6 +992,8 @@ function executeTrade(pi, qi, give, get) { SOUNDS.trade();
     if (give[r]) { flyRes(r, fromPcard(pi), toPcard(qi), give[r], d); d += give[r] * 130; }
     if (get[r]) { flyRes(r, fromPcard(qi), toPcard(pi), get[r], d + 150); d += get[r] * 130; }
   });
+  statAdd(pi, 'playerTrades');
+  statAdd(qi, 'playerTrades');
   log('🤝 ' + p.name + ' ו' + q.name + ' ביצעו עסקת חליפין');
   return true;
 }
@@ -1257,6 +1316,7 @@ function aiTurn() {
     p.dev.knight--;
     p.knightsPlayed++;
     state.devPlayed = true;
+    statAdd(state.current, 'knights');
     log(p.name + ' הפעיל אביר ⚔️');
     updateAwards();
     checkWin();
@@ -1470,6 +1530,7 @@ function aiMaybeDev(p) {
     p.dev.knight--;
     p.knightsPlayed++;
     state.devPlayed = true;
+    statAdd(state.current, 'knights');
     log(p.name + ' הפעיל אביר ⚔️');
     updateAwards();
     checkWin();
@@ -2062,6 +2123,8 @@ function renderTop() {
   $('bank-info').innerHTML = RES_TYPES.map(r =>
     `<span class="b-item">${RES[r].icon} ${state.bank[r]}</span>`).join('') +
     `<span class="b-item">🃏 ${state.devDeck.length}</span>`;
+  // עדכן תצוגת טיימר
+  updateTimerDisplay();
 }
 
 function renderBanner() {
@@ -2096,6 +2159,7 @@ function renderAll() {
 // =========================================================
 let chosenCount = 3;
 let chosenVP = 10;
+let timerInterval = null;
 
 function buildSetupRows() {
   const el = $('player-rows');
@@ -2161,7 +2225,14 @@ function startGame() {
     aiActions: 0,
     firstPlayer: 0,
     fx: { edges: new Set(), verts: new Set() },
-    viewer: players.findIndex(p => !p.isAI) === -1 ? null : players.findIndex(p => !p.isAI)
+    viewer: players.findIndex(p => !p.isAI) === -1 ? null : players.findIndex(p => !p.isAI),
+    startTime: Date.now(),
+    elapsedAtSave: 0,
+    diceRolls: [0,0,0,0,0,0,0,0,0,0,0,0,0], // index 2-12
+    stats: players.map(() => ({
+      roads: 0, settlements: 0, cities: 0, devCards: 0,
+      bankTrades: 0, playerTrades: 0, knights: 0, robberMoves: 0, diceRolls: 0
+    }))
   };
 
   clearSave();
@@ -2170,8 +2241,58 @@ function startGame() {
   $('end-game-btn').classList.remove('hidden');
   renderBoardStatic();
   log('ברוכים הבאים לקטאן! 🏝️');
+  startTimer();
   startSetup();
 }
+
+
+// =========================================================
+// טיימר משחק
+// =========================================================
+function startTimer() {
+  stopTimer();
+  const startFrom = state.elapsedAtSave || 0;
+  const baseTime = state.startTime ? (Date.now() - state.startTime) : 0;
+  const elapsed = startFrom > 0 ? startFrom : baseTime;
+  state.startTime = Date.now() - elapsed;
+  updateTimerDisplay();
+  timerInterval = setInterval(updateTimerDisplay, 1000);
+}
+
+function stopTimer() {
+  if (timerInterval) { clearInterval(timerInterval); timerInterval = null; }
+}
+
+function getElapsed() {
+  if (state.startTime) return Date.now() - state.startTime;
+  return 0;
+}
+
+function formatTime(ms) {
+  const s = Math.floor(ms / 1000);
+  const m = Math.floor(s / 60);
+  const sec = s % 60;
+  return String(m).padStart(2, '0') + ':' + String(sec).padStart(2, '0');
+}
+
+function updateTimerDisplay() {
+  const el = document.getElementById('game-timer');
+  if (el && state.phase !== 'ended') {
+    el.textContent = '⏱️ ' + formatTime(getElapsed());
+  }
+}
+
+// =========================================================
+// סטטיסטיקות — עדכון מונים
+// =========================================================
+function statAdd(pi, key) {
+  if (state.stats && state.stats[pi]) state.stats[pi][key]++;
+}
+function statDiceAdd(sum) {
+  if (state.diceRolls) state.diceRolls[sum]++;
+  if (state.stats && state.stats[state.current]) state.stats[state.current].diceRolls++;
+}
+
 
 // =========================================================
 // PWA — מניפסט ואייקונים שנוצרים בזמן ריצה (הכול בקובץ אחד)
@@ -2326,6 +2447,7 @@ const SAVE_KEY = 'katan_save';
 function saveGame() {
   if (!state || state.phase === 'ended') return;
   try {
+    state.elapsedAtSave = getElapsed();
     const save = JSON.parse(JSON.stringify(state));
     // Sets לא שורדים JSON — נהפוך למערכים
     if (save.fx) {
@@ -2498,6 +2620,7 @@ document.addEventListener('DOMContentLoaded', () => {
         $('end-game-btn').classList.remove('hidden');
         renderBoardStatic();
         renderAll();
+        startTimer();
         if (cur() && cur().isAI) {
           if (state.phase === 'setup') setTimeout(setupNext, 500);
           else if (state.phase === 'play') setTimeout(aiTurn, 800);
