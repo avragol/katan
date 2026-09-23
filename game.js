@@ -1,6 +1,7 @@
 'use strict';
 
-/* =========================================================
+/* SPDX-License-Identifier: GPL-3.0-only
+   =========================================================
    קטאן — משחק לוח מקומי (HTML/CSS/JS) בעברית
    ========================================================= */
 
@@ -92,6 +93,13 @@ function pipCount(num) { return num ? 6 - Math.abs(num - 7) : 0; }
 // ===== מצב גלובלי =====
 let board = null;
 let state = null;
+
+// Lazy-loaded GPL search engine. If an offline/file:// environment blocks modules,
+// keep the existing heuristic AI available rather than breaking the game.
+let searchModule = null;
+const searchReady = import('./catan-ai-adapter.js')
+  .then(mod => { searchModule = mod; return mod; })
+  .catch(err => { console.warn('AI search unavailable; using classic bot', err); return null; });
 
 function cur() { return state.players[state.current]; }
 function handSize(p) { return sumVals(p.res); }
@@ -1266,18 +1274,19 @@ function vertexScore(pi, vid) {
   return score + Math.random() * 0.3;
 }
 
-function aiSetupPlace() {
+async function aiSetupPlace() {
+  await searchReady;
+  if (state.phase !== 'setup' || state.mode !== 'setup-settlement' || !cur().isAI) return;
   const pi = state.current;
-  // יישוב — מעדיף מגוון משאבים + נקודות גבוהות
+  // Search evaluates every legal starting settlement, not just immediate pips.
   const spots = legalSettlementSpots(pi, false);
   spots.sort((a, b) => vertexScore(pi, b) - vertexScore(pi, a));
-  // בחירת הצומת הטובה, עם עדיפות למגוון משאבים
-  let best = spots[0], bestScore = -1;
-  for (const vid of spots) {
-    const hexes = board.vertices[vid].hexes;
-    const resTypes = new Set(hexes.map(h => TERRAINS[board.hexes[h].terrain].res).filter(Boolean));
-    const score = vertexScore(pi, vid) + resTypes.size * 1.5; // בונוס למגוון
-    if (score > bestScore) { bestScore = score; best = vid; }
+  let best = spots[0];
+  if (searchModule) {
+    try {
+      const pick = searchModule.chooseGameAction(board, state, true);
+      if (pick?.type === 'SETTLEMENT' && spots.includes(pick.node)) best = pick.node;
+    } catch (err) { console.warn('AI setup search failed', err); }
   }
   setupPlaceSettlement(best);
   // דרך — לכיוון הצומת הפנוי הטוב ביותר במרחק 2
@@ -1328,12 +1337,27 @@ function aiTurn() {
   rollDice(); // ממשיך דרך aiContinue
 }
 
-function aiContinue() {
+async function aiContinue() {
   if (state.phase !== 'play' || !cur().isAI) return;
+  const pi = state.current;
+  await searchReady;
+  if (state.phase !== 'play' || state.current !== pi || !cur().isAI) return;
   const p = cur();
   state.aiActions = (state.aiActions || 0) + 1;
   let acted = false;
-  if (state.aiActions <= 16) acted = aiTryAction(p);
+  if (state.aiActions <= 16) {
+    if (searchModule) {
+      try {
+        const pick = searchModule.chooseGameAction(board, state);
+        acted = performSearchAction(pick);
+      } catch (err) {
+        console.warn('AI search failed; using classic bot', err);
+        acted = aiTryAction(p);
+      }
+    } else {
+      acted = aiTryAction(p);
+    }
+  }
   renderAll();
   if (state.phase !== 'play') return;
   // כשאין מהלך זמין — ניסיון יזום למסחר עם שחקנים (פעם אחת בתור)
@@ -1355,6 +1379,44 @@ function aiContinue() {
     if (state.phase !== 'play') return;
     saveGame(); setTimeout(endTurn, 650);
   }
+}
+
+
+// Revalidate the simulated choice against the live game before any real side effects.
+// Search only chooses actions; existing rule functions execute them.
+function performSearchAction(action) {
+  if (!action || state.phase !== 'play' || !cur().isAI || !state.hasRolled) return false;
+  const pi = state.current, p = cur();
+  switch (action.type) {
+    case 'CITY':
+      if (p.citiesLeft && canAfford(p, COST.city) && ownSettlements(pi).includes(action.node)) {
+        placeCity(pi, action.node); return true;
+      } break;
+    case 'SETTLEMENT':
+      if (p.settlementsLeft && canAfford(p, COST.settlement) && canPlaceSettlement(pi, action.node, true)) {
+        placeSettlement(pi, action.node, false); return true;
+      } break;
+    case 'ROAD': {
+      const eid = action.edge;
+      if (eid && board.edges[eid] && p.roadsLeft && canAfford(p, COST.road) && canPlaceRoad(pi, eid)) {
+        placeRoad(pi, eid, false); return true;
+      } break;
+    }
+    case 'TRADE': {
+      const give = action.give?.toLowerCase(), get = action.get?.toLowerCase();
+      if (RES_TYPES.includes(give) && RES_TYPES.includes(get) && give !== get &&
+          bankTradeExec(pi, give, get)) return true;
+      break;
+    }
+    case 'DEV':
+      if (state.devDeck.length && canAfford(p,COST.dev)) { buyDev(pi); return true; }
+      break;
+    case 'END_TURN':
+      // No building action. Keep the existing player-trade and dev-card paths.
+      return false;
+  }
+  // If a simulated action became illegal, try the existing rules-based AI.
+  return aiTryAction(p);
 }
 
 function aiTryAction(p) {
