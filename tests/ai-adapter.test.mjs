@@ -32,8 +32,31 @@ assert.equal(s.nodes.length,Object.keys(board.vertices).length);
 assert.equal(s.players[0].vp,1);
 assert.equal(typeof evaluate(s,0),'number');
 const actions=legalActions(s);
-for (const type of ['CITY','ROAD','DEV','END_TURN']) assert.ok(actions.some(a=>a.type===type),type);
+const baselineState=baseline; // pure snapshot string, reusable for derived states
+for (const type of ['CITY','ROAD','END_TURN']) assert.ok(actions.some(a=>a.type===type),type);
+// Dev-card purchases stay in the game's classic logic, so the search must not offer DEV.
+assert.ok(!actions.some(a=>a.type==='DEV'),'DEV excluded from search actions');
+// Bank trades must be port trades (ratio <= 3) or immediately complete a build.
+for (const t of actions.filter(a=>a.type==='TRADE')) assert.ok(t.ratio<=3,t.give+'->'+t.get+'@'+t.ratio);
 assert.ok(actions.some(a=>a.type==='ROAD' && a.edge.match(/^\d+-\d+$/)));
+// 4:1 bank trade must appear only when it immediately completes a city/settlement.
+{
+  const rich = JSON.parse(baselineState);
+  rich.players[0].resources = { WOOD:0, BRICK:0, SHEEP:0, WHEAT:6, ORE:2 };
+  const acts = legalActions(rich);
+  const trade = acts.find(a => a.type==='TRADE' && a.give==='WHEAT' && a.get==='ORE');
+  assert.ok(trade && trade.ratio===4, 'completing 4:1 WHEAT->ORE must be offered');
+  const after = applyAction(rich, trade);
+  const hand = (Array.isArray(after) ? after[0].state : after).players[0].resources;
+  assert.ok(hand.WHEAT>=2 && hand.ORE>=3, 'after the trade a city is affordable');
+}
+{
+  const poor = JSON.parse(baselineState);
+  poor.players[0].resources = { WOOD:0, BRICK:0, SHEEP:0, WHEAT:6, ORE:0 };
+  const acts = legalActions(poor);
+  assert.ok(!acts.some(a => a.type==='TRADE'), 'non-completing 4:1 must be blocked');
+}
+
 for (const a of actions.filter(x=>x.type!=='END_TURN')) {
   const next=applyAction(s,a);
   const sample=Array.isArray(next) ? next[0].state : next;
@@ -88,7 +111,7 @@ assert.equal(JSON.stringify(s),baseline);
 console.log('Chance distributions, hidden deck order, and immutability: OK');
 // Check the browser glue dispatches a search result to existing rule functions.
 const start=code.indexOf('function performSearchAction(action) {');
-const end=code.indexOf('function aiTryAction(p) {',start);
+const end=code.indexOf('function aiTryAction(p, skipDev = false) {',start);
 assert.ok(start>0 && end>start);
 const calls=[];
 const liveContext=vm.createContext({

@@ -359,10 +359,14 @@ function nextPlayerAfter(state, pid) {
  */
 export function evaluate(state, pid, weights = DEFAULT_WEIGHTS, explain = false) {
   const me = playerById(state, pid);
-  const enemyId = nextPlayerAfter(state, pid);
 
   const production = valueProduction(effectiveProduction(state, pid), true);
-  const enemyProduction = enemyId === pid ? 0 : valueProduction(effectiveProduction(state, enemyId), false);
+  // Catanatron's value function scores only the next player in seating order, so a
+  // bot seated before a strong human ignored that player entirely. Count the
+  // strongest opponent instead: same 2-player scale, but never the wrong enemy.
+  const enemyProduction = state.players
+    .filter(o => o.id !== pid)
+    .reduce((best, o) => Math.max(best, valueProduction(effectiveProduction(state, o.id), false)), 0);
 
   const longestRoadLength = me.longestRoadLength != null ? me.longestRoadLength : computeLongestRoad(state, pid);
 
