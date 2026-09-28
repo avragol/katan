@@ -94,7 +94,7 @@ function nearestNeed(s, pid) {
   if (p.roadsLeft && Object.keys(s.edgeIds).some(key => {
     const [a,b] = keyToPair(s,key); return roadLegal(s,pid,a,b);
   })) goals.push(COST.ROAD);
-  if (s.deck) goals.push(COST.DEV);
+  // סחר עם הבנק מממן בנייה בלבד — לא קלף פיתוח.
   return goals;
 }
 function keyToPair(s,key) { return s.edgePairs[key]; }

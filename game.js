@@ -1346,8 +1346,12 @@ async function aiContinue() {
   const p = cur();
   state.aiActions = (state.aiActions || 0) + 1;
   let acted = false;
-  // קלף פיתוח — נשאר בלוגיקה הקלאסית (פעם בתור), כדי שהבוטים יצברו אבירים ולא יתעלמו מהשודד
-  if (state.aiActions <= 16 && !state.aiBoughtDev &&
+  // קלף פיתוח — נשאר בלוגיקה הקלאסית (פעם בתור), כדי שהבוטים יצברו אבירים ולא יתעלמו מהשודד.
+  // לא להקדים בנייה שאפשר לבצע כבר עכשיו — הקלף ייקנה באיטרציה הבאה של אותו תור.
+  const canBuildNow =
+    (p.citiesLeft > 0 && canAfford(p, COST.city) && ownSettlements(pi).length > 0) ||
+    (p.settlementsLeft > 0 && canAfford(p, COST.settlement) && legalSettlementSpots(pi, true).length > 0);
+  if (state.aiActions <= 16 && !state.aiBoughtDev && !canBuildNow &&
       state.devDeck.length && canAfford(p, COST.dev) && p.dev.knight + p.newDev.knight < 3 &&
       (handSize(p) >= 4 || Math.random() < 0.5)) {
     buyDev(pi);
@@ -1361,7 +1365,7 @@ async function aiContinue() {
         acted = performSearchAction(pick);
       } catch (err) {
         console.warn('AI search failed; using classic bot', err);
-        acted = aiTryAction(p);
+        acted = aiTryAction(p, state.aiBoughtDev);
       }
     } else {
       acted = aiTryAction(p);
@@ -1425,10 +1429,11 @@ function performSearchAction(action) {
       return false;
   }
   // If a simulated action became illegal, try the existing rules-based AI.
-  return aiTryAction(p);
+  // skipDev: אם כבר נקנה קלף פיתוח בתור הזה, הפאלבק לא יקנה שני.
+  return aiTryAction(p, state.aiBoughtDev);
 }
 
-function aiTryAction(p) {
+function aiTryAction(p, skipDev = false) {
   const pi = state.current;
   // עיר — תמיד עדיפות ראשונה (יותר VP, משתלם)
   if (p.citiesLeft > 0 && canAfford(p, COST.city)) {
@@ -1440,7 +1445,7 @@ function aiTryAction(p) {
     }
   }
   // קלף פיתוח — אם יש 4+ קלפים ביד ואפשר לקנות, קנה כמעט תמיד (צבירת אבירים)
-  if (state.devDeck.length && canAfford(p, COST.dev) && p.dev.knight + p.newDev.knight < 3) {
+  if (!skipDev && state.devDeck.length && canAfford(p, COST.dev) && p.dev.knight + p.newDev.knight < 3) {
     if (handSize(p) >= 4 || Math.random() < 0.45) {
       buyDev(pi);
       return true;
@@ -1474,7 +1479,7 @@ function aiTryAction(p) {
   // מסחר עם הבנק כדי להשלים את היעד
   if (aiTryBankTrade(p)) return true;
   // קלף פיתוח — גם כשאי אפשר לבנות, וכשיש עודף
-  if (state.devDeck.length && canAfford(p, COST.dev)) {
+  if (!skipDev && state.devDeck.length && canAfford(p, COST.dev)) {
     const goal = aiGoal(p);
     const goalMiss = RES_TYPES.reduce((s, r) => s + Math.max(0, (goal[r] || 0) - p.res[r]), 0);
     if (goalMiss >= 2 || handSize(p) >= 7 || Math.random() < 0.35) {
