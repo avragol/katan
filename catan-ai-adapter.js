@@ -131,19 +131,27 @@ export function legalActions(s) {
           .map(other => productionAt(s,map.get(other)) * 0.7));
         return direct + next;
       }));
-      options.push({ type: 'ROAD', edge: key, score });
+      // אין טעם לבנות דרך שלא פותחת שום צומת בנייה — היא רק שורפת משאבים
+      if (score > 0) options.push({ type: 'ROAD', edge: key, score });
     }
     options.sort((a,b) => b.score - a.score);
     acts.push(...options.slice(0,12).map(({ type,edge }) => ({ type,edge })));
   }
-  if (s.deck && affordable(p,COST.DEV)) acts.push({ type: 'DEV' });
+  // קלף פיתוח נקנה בלוגיקה הקלאסית של המשחק; החיפוש מחליט רק על בנייה והרחבה.
   // Only trades toward a buildable goal, and never exchange the same resource.
   const wanted = new Set();
   for (const goal of nearestNeed(s,pid))
     for (const r of R) if (p.resources[r] < (goal[r] || 0)) wanted.add(r);
   for (const get of wanted) if (s.bank[get] > 0) {
-    for (const give of R) if (give !== get && p.resources[give] >= ratio(s,pid,give))
-      acts.push({ type: 'TRADE', give, get, ratio: ratio(s,pid,give) });
+    for (const give of R) if (give !== get && p.resources[give] >= ratio(s,pid,give)) {
+      const r = ratio(s,pid,give);
+      // סחר 4:1 עם הבנק מותר רק אם הוא משלים בנייה מידית; נמלים (2:1/3:1) תמיד כדאיים יותר
+      const after = Object.fromEntries(R.map(res =>
+        [res, p.resources[res] + (res === get ? 1 : 0) - (res === give ? r : 0)]));
+      const completes = [COST.CITY, COST.SETTLEMENT].some(cost =>
+        R.every(res => after[res] >= (cost[res] || 0)));
+      if (r <= 3 || completes) acts.push({ type: 'TRADE', give, get, ratio: r });
+    }
   }
   acts.push({ type: 'END_TURN' });
   return acts;

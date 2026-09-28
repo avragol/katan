@@ -32,7 +32,11 @@ assert.equal(s.nodes.length,Object.keys(board.vertices).length);
 assert.equal(s.players[0].vp,1);
 assert.equal(typeof evaluate(s,0),'number');
 const actions=legalActions(s);
-for (const type of ['CITY','ROAD','DEV','END_TURN']) assert.ok(actions.some(a=>a.type===type),type);
+for (const type of ['CITY','ROAD','END_TURN']) assert.ok(actions.some(a=>a.type===type),type);
+// Dev-card purchases stay in the game's classic logic, so the search must not offer DEV.
+assert.ok(!actions.some(a=>a.type==='DEV'),'DEV excluded from search actions');
+// Bank trades must be port trades (ratio <= 3) or immediately complete a build.
+for (const t of actions.filter(a=>a.type==='TRADE')) assert.ok(t.ratio<=3,t.give+'->'+t.get+'@'+t.ratio);
 assert.ok(actions.some(a=>a.type==='ROAD' && a.edge.match(/^\d+-\d+$/)));
 for (const a of actions.filter(x=>x.type!=='END_TURN')) {
   const next=applyAction(s,a);

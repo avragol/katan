@@ -1228,6 +1228,7 @@ function startTurn() {
   state.devPlayed = false;
   state.freeRoads = 0;
   state.aiTraded = false;
+  state.aiBoughtDev = false;
   state.mode = null;
   log('— התור של ' + cur().name + ' —');
   renderAll();
@@ -1345,7 +1346,15 @@ async function aiContinue() {
   const p = cur();
   state.aiActions = (state.aiActions || 0) + 1;
   let acted = false;
-  if (state.aiActions <= 16) {
+  // קלף פיתוח — נשאר בלוגיקה הקלאסית (פעם בתור), כדי שהבוטים יצברו אבירים ולא יתעלמו מהשודד
+  if (state.aiActions <= 16 && !state.aiBoughtDev &&
+      state.devDeck.length && canAfford(p, COST.dev) && p.dev.knight + p.newDev.knight < 3 &&
+      (handSize(p) >= 4 || Math.random() < 0.5)) {
+    buyDev(pi);
+    state.aiBoughtDev = true;
+    acted = true;
+  }
+  if (!acted && state.aiActions <= 16) {
     if (searchModule) {
       try {
         const pick = searchModule.chooseGameAction(board, state);
