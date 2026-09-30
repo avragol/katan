@@ -8,8 +8,8 @@ const end = src.indexOf('function applyBoardView');
 assert.ok(start > 0 && end > start, 'zoom math block not found in game.js');
 const math = src.slice(start, end);
 const ctx = {};
-new Function('module', math + '\nmodule.exports = { BOARD_BASE_VIEW, BOARD_ZOOM_MAX, bvClamp, bvZoomAt, bvPanBy };')(ctx);
-const { BOARD_BASE_VIEW: B, bvClamp, bvZoomAt, bvPanBy } = ctx.exports;
+new Function('module', math + '\nmodule.exports = { BOARD_BASE_VIEW, BOARD_ZOOM_MAX, bvClamp, bvZoomAt, bvPanBy, bvDragBy, bvWheelFactor, bvPinchActive, bvPinchFactor };')(ctx);
+const { BOARD_BASE_VIEW: B, bvClamp, bvZoomAt, bvPanBy, bvDragBy, bvWheelFactor, bvPinchActive, bvPinchFactor } = ctx.exports;
 
 const base = { x: B.x, y: B.y, w: B.w, h: B.h };
 const eq = (a, b, msg, eps = 1e-6) => {
@@ -59,4 +59,26 @@ eq(seq, base, 'full zoom-out returns exactly to base');
 const noZoom = bvPanBy(base, 300, 300);
 eq(noZoom, base, 'panning at 1x stays at base');
 
-console.log('Board zoom math: 7/7 OK');
+// 8. גרירה מדויקת: התוכן עוקב אחרי האצבע 1:1 — האצבע זזה 100 יחידות לוח ימינה
+//    → חלון התצוגה זז 100 שמאלה (אותם פיקסלים של תוכן נשארים מתחת לאצבע)
+let v8 = bvZoomAt(base, 0, 0, 2);
+const f0 = { x: 50, y: 20 }, f1 = { x: 150, y: 20 }; // אצבע זזה 100 ימינה במרחב הלוח
+const v8n = bvDragBy(v8, f0, f1);
+assert.ok(Math.abs((v8n.x - v8.x) + 100) < 1e-6 || (v8.x - v8n.x) <= 100 + 1e-6, 'drag follows the finger horizontally');
+assert.ok(v8.y === v8n.y, 'no vertical drift for a horizontal drag');
+
+// 9. גלגלת פרופורציונלית
+assert.ok(bvWheelFactor(-100, 0) > 1.1 && bvWheelFactor(-100, 0) < 1.3, 'full wheel tick ≈ 1.16x zoom-in');
+assert.ok(bvWheelFactor(100, 0) < 0.9 && bvWheelFactor(100, 0) > 0.75, 'full wheel tick zoom-out is symmetric');
+assert.ok(Math.abs(bvWheelFactor(-3, 0) - 1) < 0.01, 'gentle trackpad swipe = gentle zoom');
+assert.ok(Math.abs(bvWheelFactor(3, 1) - bvWheelFactor(99, 0)) < 1e-9, 'line-mode delta is normalized to pixels');
+assert.ok(bvWheelFactor(0, 0) === 1, 'zero scroll = no zoom');
+
+// 10. צביטה: סף הפעלה + הגבלת קצב לאירוע
+assert.ok(!bvPinchActive(39) && bvPinchActive(40), 'pinch activates only from 40px');
+assert.ok(Math.abs(bvPinchFactor(100, 105) - 1.05) < 1e-9, 'normal small pinch ratio passes through');
+assert.ok(bvPinchFactor(100, 300) === 1.1, 'runaway pinch clamped to 1.1x per event');
+assert.ok(bvPinchFactor(300, 100) === 0.9, 'collapse pinch clamped to 0.9x per event');
+assert.ok(bvPinchFactor(0, 100) === 1, 'no baseline = no zoom');
+
+console.log('Board zoom math: 10/10 OK');

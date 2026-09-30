@@ -2441,6 +2441,31 @@ function bvPanBy(v, dx, dy) {
   return bvClamp({ x: v.x + dx, y: v.y + dy, w: v.w, h: v.h });
 }
 
+// גרירה מדויקת: boardFrom/boardTo הן נקודות האצבע (התחלה/סוף) בקואורדינטות לוח,
+// כפי שהדפדפן ממפה אותן (getScreenCTM — כולל ריפוד ה-letterbox). התוכן עוקב אחרי האצבע 1:1.
+function bvDragBy(v, boardFrom, boardTo) {
+  return bvPanBy(v, boardFrom.x - boardTo.x, boardFrom.y - boardTo.y);
+}
+
+// גלגלת פרופורציונלית: גודל הזום נגזר מגודל הגלילה, לא פקטור קבוע.
+// deltaMode 1 = "שורות" — מנורמל לפיקסלים (≈33px לשורה) כדי שגלגלת פיזית תרגיש זהה בכל דפדפן.
+// החלקה עדינה בטראקפד (delta קטן) → זום עדין; גלגלת מלאה → כ-1.16x לסיבוב.
+const WHEEL_K = 0.0015;
+function bvWheelFactor(deltaY, deltaMode) {
+  const d = (deltaMode === 1 ? deltaY * 33 : deltaY);
+  return Math.exp(-d * WHEEL_K);
+}
+
+// צביטה: מופעלת רק כששתי נקודות המגע מרוחקות מספיק (מונע "צביצת רפאים" ממגע כף יד/קצה),
+// וקצב הזום לאירוע מוגבל כדי שקואורדינטות קופצות לא יטלפרטו את הלוח.
+const PINCH_START_PX = 40;
+const PINCH_EVENT_MIN = 0.9, PINCH_EVENT_MAX = 1.1;
+function bvPinchActive(dist) { return dist >= PINCH_START_PX; }
+function bvPinchFactor(prevDist, dist) {
+  if (prevDist <= 0 || dist <= 0) return 1;
+  return Math.min(PINCH_EVENT_MAX, Math.max(PINCH_EVENT_MIN, dist / prevDist));
+}
+
 function applyBoardView() {
   const svg = $('board');
   if (svg) svg.setAttribute('viewBox', boardView.x + ' ' + boardView.y + ' ' + boardView.w + ' ' + boardView.h);
@@ -2467,28 +2492,27 @@ function initBoardZoom() {
   const svg = $('board');
   if (!svg) return;
   const pointers = new Map();
-  let pinchDist = 0, panStart = null, moved = false, lastTap = 0, lastTapXY = null;
+  let pinchDist = 0, pinching = false, panStart = null, downXY = null, moved = false, lastTap = 0, lastTapXY = null;
 
   // גרירה לא תיחשב לקליק: בולעים את הקליק בשלב ה-capture, לפני הקוביות/הצמתים.
   svg.addEventListener('click', e => {
     if (moved) { e.stopPropagation(); e.preventDefault(); moved = false; }
   }, true);
 
-  // גלגלת = זום סביב הסמן
+  // גלגלת = זום סביב הסמן, בעוצמה פרופורציונלית לגלילה
   svg.addEventListener('wheel', e => {
     e.preventDefault();
-    zoomBoardAt(e.clientX, e.clientY, e.deltaY < 0 ? 1.15 : 1 / 1.15);
+    zoomBoardAt(e.clientX, e.clientY, bvWheelFactor(e.deltaY, e.deltaMode));
   }, { passive: false });
 
   svg.addEventListener('pointerdown', e => {
     // ללא setPointerCapture: לכידת הפוינטר הייתה מנתבת גם אירועי click אל ה-SVG
     // ושוברת לחיצות על קוביות, צמתים ודרכים. גרירה מנוטרת ב-pointermove רג�יל.
     pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
-    if (pointers.size === 1) panStart = { x: e.clientX, y: e.clientY, vx: boardView.x, vy: boardView.y };
+    if (pointers.size === 1) { panStart = { x: e.clientX, y: e.clientY }; downXY = { x: e.clientX, y: e.clientY }; }
     if (pointers.size === 2) {
-      const [a, b] = [...pointers.values()];
-      pinchDist = Math.hypot(a.x - b.x, a.y - b.y);
-      panStart = null;
+      // הצביצה תיכנס לפעולה רק כשהמרחק עובר את הסף; עד אז שתי הנקודות רק נעקבות
+      pinchDist = 0; pinching = false; panStart = null;
     }
   });
 
@@ -2498,27 +2522,33 @@ function initBoardZoom() {
     if (pointers.size === 2) { // צביטה
       const [a, b] = [...pointers.values()];
       const d = Math.hypot(a.x - b.x, a.y - b.y);
-      if (pinchDist > 0 && d > 0) {
-        zoomBoardAt((a.x + b.x) / 2, (a.y + b.y) / 2, d / pinchDist);
-        pinchDist = d;
+      if (!pinching) {
+        if (bvPinchActive(d)) { pinching = true; pinchDist = d; }
+        return;
+      }
+      const f = bvPinchFactor(pinchDist, d);
+      if (f !== 1) {
+        zoomBoardAt((a.x + b.x) / 2, (a.y + b.y) / 2, f);
         moved = true;
       }
+      pinchDist = d;
       return;
     }
     if (panStart && boardView.w < BOARD_BASE_VIEW.w - 1e-9) { // גרירה רק כשיש זום
-      const rect = svg.getBoundingClientRect();
-      const dx = (e.clientX - panStart.x) / rect.width * boardView.w;
-      const dy = (e.clientY - panStart.y) / rect.height * boardView.h;
-      boardView = bvPanBy(boardView, -dx, -dy);
+      // מיפוי מדויק דרך getScreenCTM (כולל ריפוד) — מעקב אצבע 1:1 בכל ציר, מכשיר וזום.
+      const pFrom = clientToBoard(panStart.x, panStart.y);
+      const pTo = clientToBoard(e.clientX, e.clientY);
+      boardView = bvDragBy(boardView, pFrom, pTo);
       applyBoardView();
-      if (Math.hypot(e.clientX - panStart.x, e.clientY - panStart.y) > 6) moved = true;
+      panStart = { x: e.clientX, y: e.clientY }; // בסיס מתחדש לאירוע הבא — הצטברות מדויקת
+      if (Math.hypot(e.clientX - downXY.x, e.clientY - downXY.y) > 6) moved = true;
     }
   });
 
   const endPointer = e => {
     const wasPinch = pointers.size === 2;
     pointers.delete(e.pointerId);
-    if (pointers.size < 2) pinchDist = 0;
+    if (pointers.size < 2) { pinchDist = 0; pinching = false; }
     // הקשה כפולה — מתגדל/מתאפס סביב הנקודה
     if (!wasPinch && !moved && pointers.size === 0) {
       const now = performance.now();
@@ -2534,7 +2564,7 @@ function initBoardZoom() {
     if (pointers.size === 0) { panStart = null; moved = false; }
   };
   svg.addEventListener('pointerup', endPointer);
-  svg.addEventListener('pointercancel', e => { pointers.delete(e.pointerId); pinchDist = 0; panStart = null; if (!pointers.size) moved = false; });
+  svg.addEventListener('pointercancel', e => { pointers.delete(e.pointerId); pinchDist = 0; pinching = false; panStart = null; if (!pointers.size) moved = false; });
 
   // כפתורים — זום סביב מרכז הלוח
   const center = () => { const r = svg.getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; };
