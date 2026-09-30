@@ -125,7 +125,16 @@ main { flex: 1; display: flex; min-height: 0; }
 
 /* ===== לוח ===== */
 #board-wrap { flex: 1; position: relative; display: flex; align-items: center; justify-content: center; padding: 8px; min-width: 0; }
+#zoom-controls { position: absolute; inset-block-end: 10px; inset-inline-start: 10px; z-index: 60; display: flex; flex-direction: column; gap: 6px; }
+#zoom-controls button {
+  width: 40px; height: 40px; border-radius: 12px; border: 2px solid #8a5a2b;
+  background: #fdf6e3; color: #5b3a22; font-size: 20px; font-weight: 700; line-height: 1;
+  cursor: pointer; box-shadow: 0 3px 10px rgba(0,0,0,.35);
+}
+#zoom-controls button:hover { background: #f3e4c2; }
+#zoom-controls button:active { transform: scale(.94); }
 #board {
+  touch-action: none; /* צביטה וגרירה מנוהלות ב-JS, לא בזום של הדפדפן */
   width: 100%; height: 100%;
   max-height: calc(100vh - 80px); max-height: calc(100dvh - 80px);
   user-select: none; -webkit-user-select: none;
