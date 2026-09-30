@@ -461,6 +461,17 @@ function endGame(winner) {
 // =========================================================
 // יומן
 // =========================================================
+function restoreLog() {
+  const el = $('log');
+  el.innerHTML = '';
+  for (const m of state.log.slice(-120)) {
+    const d = document.createElement('div');
+    d.textContent = m;
+    el.appendChild(d);
+  }
+  el.scrollTop = el.scrollHeight;
+}
+
 function log(msg) {
   state.log.push(msg);
   const el = $('log');
@@ -1242,8 +1253,8 @@ function endTurn() {
   // קלפים שנקנו הופכים זמינים
   for (const t in p.newDev) { p.dev[t] += p.newDev[t]; p.newDev[t] = 0; }
   state.current = (state.current + 1) % state.players.length;
-  saveGame();
   startTurn();
+  saveGame(); // אחרי startTurn — דגלי התור מאופסים, השמירה מייצגת תור נקי
 }
 
 // =========================================================
@@ -2730,6 +2741,17 @@ function hasSave() {
 // =========================================================
 // סיום משחק ידני
 // =========================================================
+// החלטה טהורה: כיצד להמשיך משחק שמור (בודק אך ורק את תוכן המצב)
+function resumeDecision(s) {
+  if (!s) return 'none';
+  if (s.phase === 'setup') return 'setup';
+  if (s.phase !== 'play') return 'none';
+  const p = s.players && s.players[s.current];
+  if (!p || !p.isAI) return 'none';
+  // תור שנשמר באמצע — אחרי הטלת הקוביות. ממשיכים מהמקום שבו נעצר בלי הטלה חוזרת.
+  return s.hasRolled ? 'mid' : 'fresh';
+}
+
 function quitGame() {
   showModal(`
     <h2>סיים משחק?</h2>
@@ -2873,9 +2895,12 @@ document.addEventListener('DOMContentLoaded', () => {
         renderBoardStatic();
         renderAll();
         startTimer();
+        restoreLog();
         if (cur() && cur().isAI) {
-          if (state.phase === 'setup') setTimeout(setupNext, 500);
-          else if (state.phase === 'play') setTimeout(aiTurn, 800);
+          const how = resumeDecision(state);
+          if (how === 'setup') setTimeout(setupNext, 500);
+          else if (how === 'fresh') setTimeout(aiTurn, 800);
+          else if (how === 'mid') setTimeout(aiContinue, 800);
         }
       };
       setupCard.insertBefore(btn, setupCard.firstChild);
