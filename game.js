@@ -2690,13 +2690,13 @@ const SOUNDS = {
 const SAVE_KEY = 'katan_save';
 
 function saveGame() {
-  if (!state || state.phase === 'ended') return;
+  if (!state || state.phase === 'ended' || !board) return;
   try {
     state.elapsedAtSave = getElapsed();
-    const save = JSON.parse(JSON.stringify(state));
+    const save = { v: 2, state: JSON.parse(JSON.stringify(state)), board: JSON.parse(JSON.stringify(board)) };
     // Sets לא שורדים JSON — נהפוך למערכים
-    if (save.fx) {
-      save.fx = { edges: [...state.fx.edges], verts: [...state.fx.verts] };
+    if (save.state.fx) {
+      save.state.fx = { edges: [...state.fx.edges], verts: [...state.fx.verts] };
     }
     localStorage.setItem(SAVE_KEY, JSON.stringify(save));
   } catch (e) { /* שמירה נכשלה — לא קריטי */ }
@@ -2707,8 +2707,13 @@ function loadGame() {
     const raw = localStorage.getItem(SAVE_KEY);
     if (!raw) return null;
     const saved = JSON.parse(raw);
-    if (saved.fx) {
-      saved.fx = { edges: new Set(saved.fx.edges || []), verts: new Set(saved.fx.verts || []) };
+    // רק פורמט v2 ניתן להמשך (state + board). שמירות ישנות/פגומות נמחקות בעדינות.
+    if (!saved || saved.v !== 2 || !saved.state || !saved.board) {
+      localStorage.removeItem(SAVE_KEY);
+      return null;
+    }
+    if (saved.state.fx) {
+      saved.state.fx = { edges: new Set(saved.state.fx.edges || []), verts: new Set(saved.state.fx.verts || []) };
     }
     return saved;
   } catch (e) { return null; }
@@ -2860,7 +2865,8 @@ document.addEventListener('DOMContentLoaded', () => {
       btn.onclick = () => {
         const saved = loadGame();
         if (!saved) { location.reload(); return; }
-        state = saved;
+        state = saved.state;
+        board = saved.board; // שחזור הלוח עצמו — סידור הקוביות, המספרים, הנמלים וכל הבניינים
         $('setup-screen').classList.add('hidden');
         $('game').classList.remove('hidden');
         $('end-game-btn').classList.remove('hidden');
