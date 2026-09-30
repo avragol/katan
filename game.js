@@ -2255,6 +2255,7 @@ function buildSetupRows() {
 }
 
 function startGame() {
+  resetBoardView();
   const players = [];
   for (let i = 0; i < chosenCount; i++) {
     const name = $('pname-' + i).value.trim() || ('שחקן ' + (i + 1));
@@ -2403,6 +2404,144 @@ function pwaIcon(size) {
   x.textBaseline = 'middle';
   x.fillText('ק', cx, cy + size * 0.03);
   return c.toDataURL('image/png');
+}
+
+// =========================================================
+// זום וגלילה של הלוח — viewBox דינמי
+// החלק המתמטי (bv*) טהור ונבדק ב-tests/board-zoom.test.mjs.
+// =========================================================
+const BOARD_BASE_VIEW = { x: -345, y: -325, w: 690, h: 650 };
+const BOARD_ZOOM_MAX = 3;
+const BOARD_PAN_MARGIN = 60; // כמה אפשר לגלול מעבר לשולי הלוח
+let boardView = { x: BOARD_BASE_VIEW.x, y: BOARD_BASE_VIEW.y, w: BOARD_BASE_VIEW.w, h: BOARD_BASE_VIEW.h };
+
+// מגביל את התצוגה לטווח החוקי: זום 1x-3x, גלילה בתוך שולי הלוח.
+function bvClamp(v) {
+  const b = BOARD_BASE_VIEW;
+  let w = Math.min(b.w, Math.max(b.w / BOARD_ZOOM_MAX, v.w));
+  if (w >= b.w - 1e-9) return { x: b.x, y: b.y, w: b.w, h: b.h }; // אין זום → תצוגת הבסיס
+  const h = w * b.h / b.w;
+  // הגלילה שומרת את מרכז התצוגה בתוך הלוח (+ שוליים)
+  let cx = Math.min(b.x + b.w + BOARD_PAN_MARGIN - w / 2, Math.max(b.x - BOARD_PAN_MARGIN + w / 2, v.x + v.w / 2));
+  let cy = Math.min(b.y + b.h + BOARD_PAN_MARGIN - h / 2, Math.max(b.y - BOARD_PAN_MARGIN + h / 2, v.y + v.h / 2));
+  return { x: cx - w / 2, y: cy - h / 2, w, h };
+}
+
+// זום פי-factor סביב נקודת עוגן (px,py) בקואורדינטות ה-SVG.
+function bvZoomAt(v, px, py, factor) {
+  const b = BOARD_BASE_VIEW;
+  let w = v.w / factor;
+  w = Math.min(b.w, Math.max(b.w / BOARD_ZOOM_MAX, w));
+  const k = w / v.w;
+  return bvClamp({ x: px - (px - v.x) * k, y: py - (py - v.y) * k, w, h: w * b.h / b.w });
+}
+
+// הזזת התצוגה ב-(dx,dy) בקואורדינטות ה-SVG.
+function bvPanBy(v, dx, dy) {
+  return bvClamp({ x: v.x + dx, y: v.y + dy, w: v.w, h: v.h });
+}
+
+function applyBoardView() {
+  const svg = $('board');
+  if (svg) svg.setAttribute('viewBox', boardView.x + ' ' + boardView.y + ' ' + boardView.w + ' ' + boardView.h);
+}
+
+function resetBoardView() {
+  boardView = { x: BOARD_BASE_VIEW.x, y: BOARD_BASE_VIEW.y, w: BOARD_BASE_VIEW.w, h: BOARD_BASE_VIEW.h };
+  applyBoardView();
+}
+
+function clientToBoard(clientX, clientY) {
+  const svg = $('board');
+  const pt = new DOMPoint(clientX, clientY).matrixTransform(svg.getScreenCTM().inverse());
+  return { x: pt.x, y: pt.y };
+}
+
+function zoomBoardAt(clientX, clientY, factor) {
+  const p = clientToBoard(clientX, clientY);
+  boardView = bvZoomAt(boardView, p.x, p.y, factor);
+  applyBoardView();
+}
+
+function initBoardZoom() {
+  const svg = $('board');
+  if (!svg) return;
+  const pointers = new Map();
+  let pinchDist = 0, panStart = null, moved = false, lastTap = 0, lastTapXY = null;
+
+  // גרירה לא תיחשב לקליק: בולעים את הקליק בשלב ה-capture, לפני הקוביות/הצמתים.
+  svg.addEventListener('click', e => {
+    if (moved) { e.stopPropagation(); e.preventDefault(); moved = false; }
+  }, true);
+
+  // גלגלת = זום סביב הסמן
+  svg.addEventListener('wheel', e => {
+    e.preventDefault();
+    zoomBoardAt(e.clientX, e.clientY, e.deltaY < 0 ? 1.15 : 1 / 1.15);
+  }, { passive: false });
+
+  svg.addEventListener('pointerdown', e => {
+    // ללא setPointerCapture: לכידת הפוינטר הייתה מנתבת גם אירועי click אל ה-SVG
+    // ושוברת לחיצות על קוביות, צמתים ודרכים. גרירה מנוטרת ב-pointermove רג�יל.
+    pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (pointers.size === 1) panStart = { x: e.clientX, y: e.clientY, vx: boardView.x, vy: boardView.y };
+    if (pointers.size === 2) {
+      const [a, b] = [...pointers.values()];
+      pinchDist = Math.hypot(a.x - b.x, a.y - b.y);
+      panStart = null;
+    }
+  });
+
+  svg.addEventListener('pointermove', e => {
+    if (!pointers.has(e.pointerId)) return;
+    pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (pointers.size === 2) { // צביטה
+      const [a, b] = [...pointers.values()];
+      const d = Math.hypot(a.x - b.x, a.y - b.y);
+      if (pinchDist > 0 && d > 0) {
+        zoomBoardAt((a.x + b.x) / 2, (a.y + b.y) / 2, d / pinchDist);
+        pinchDist = d;
+        moved = true;
+      }
+      return;
+    }
+    if (panStart && boardView.w < BOARD_BASE_VIEW.w - 1e-9) { // גרירה רק כשיש זום
+      const rect = svg.getBoundingClientRect();
+      const dx = (e.clientX - panStart.x) / rect.width * boardView.w;
+      const dy = (e.clientY - panStart.y) / rect.height * boardView.h;
+      boardView = bvPanBy(boardView, -dx, -dy);
+      applyBoardView();
+      if (Math.hypot(e.clientX - panStart.x, e.clientY - panStart.y) > 6) moved = true;
+    }
+  });
+
+  const endPointer = e => {
+    const wasPinch = pointers.size === 2;
+    pointers.delete(e.pointerId);
+    if (pointers.size < 2) pinchDist = 0;
+    // הקשה כפולה — מתגדל/מתאפס סביב הנקודה
+    if (!wasPinch && !moved && pointers.size === 0) {
+      const now = performance.now();
+      if (lastTapXY && now - lastTap < 350 &&
+          Math.hypot(e.clientX - lastTapXY.x, e.clientY - lastTapXY.y) < 24) {
+        const zoomed = boardView.w < BOARD_BASE_VIEW.w - 1e-9;
+        zoomBoardAt(e.clientX, e.clientY, zoomed ? BOARD_BASE_VIEW.w / boardView.w : 2);
+        lastTap = 0; lastTapXY = null;
+      } else {
+        lastTap = now; lastTapXY = { x: e.clientX, y: e.clientY };
+      }
+    }
+    if (pointers.size === 0) { panStart = null; moved = false; }
+  };
+  svg.addEventListener('pointerup', endPointer);
+  svg.addEventListener('pointercancel', e => { pointers.delete(e.pointerId); pinchDist = 0; panStart = null; if (!pointers.size) moved = false; });
+
+  // כפתורים — זום סביב מרכז הלוח
+  const center = () => { const r = svg.getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; };
+  const bind = (id, fn) => { const b = $(id); if (b) { b.addEventListener('click', e => { e.stopPropagation(); fn(); }); b.addEventListener('pointerdown', e => e.stopPropagation()); } };
+  bind('zoom-in', () => { const c = center(); zoomBoardAt(c.x, c.y, 1.25); });
+  bind('zoom-out', () => { const c = center(); zoomBoardAt(c.x, c.y, 1 / 1.25); });
+  bind('zoom-reset', resetBoardView);
 }
 
 function initPWA() {
@@ -2647,6 +2786,7 @@ function initVPSlider() {
 // ===== חיווט ראשוני =====
 document.addEventListener('DOMContentLoaded', () => {
   initPWA();
+  initBoardZoom();
   const ib = $('install-btn');
   if (ib) ib.onclick = () => {
     if (!installEvent) return;
