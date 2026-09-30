@@ -2481,7 +2481,8 @@ function initBoardZoom() {
   }, { passive: false });
 
   svg.addEventListener('pointerdown', e => {
-    svg.setPointerCapture(e.pointerId);
+    // ללא setPointerCapture: לכידת הפוינטר הייתה מנתבת גם אירועי click אל ה-SVG
+    // ושוברת לחיצות על קוביות, צמתים ודרכים. גרירה מנוטרת ב-pointermove רג�יל.
     pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
     if (pointers.size === 1) panStart = { x: e.clientX, y: e.clientY, vx: boardView.x, vy: boardView.y };
     if (pointers.size === 2) {
